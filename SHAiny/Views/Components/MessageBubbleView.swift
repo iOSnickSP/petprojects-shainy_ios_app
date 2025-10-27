@@ -12,14 +12,45 @@ import SwiftUI
 struct MessageBubbleView: View {
     let message: Message
     let showEncryptedData: Bool
+    let encryptionKey: String?
+    let shouldShowTimestamp: Bool
+    let onReply: ((Message) -> Void)?
+    
+    @State private var offset: CGFloat = 0
+    @State private var isSwiping = false
+    
+    private let swipeThreshold: CGFloat = -50
+    private let triggerHapticThreshold: CGFloat = -35
+    @State private var hasTriggeredHaptic = false
+    
+    init(message: Message, showEncryptedData: Bool, encryptionKey: String? = nil, shouldShowTimestamp: Bool = true, onReply: ((Message) -> Void)? = nil) {
+        self.message = message
+        self.showEncryptedData = showEncryptedData
+        self.encryptionKey = encryptionKey
+        self.shouldShowTimestamp = shouldShowTimestamp
+        self.onReply = onReply
+    }
     
     var body: some View {
-        HStack(alignment: .bottom, spacing: 0) {
-            if message.isFromCurrentUser {
-                Spacer(minLength: 60)
+        ZStack(alignment: .trailing) {
+            // Reply icon that appears behind the message when swiping
+            if onReply != nil && offset < -20 {
+                HStack {
+                    Spacer()
+                    Image(systemName: "arrowshape.turn.up.left.fill")
+                        .font(.title2)
+                        .foregroundColor(.purple)
+                        .opacity(min(1.0, Double(-offset / 60)))
+                        .padding(.trailing, 20)
+                }
             }
             
-            VStack(alignment: message.isFromCurrentUser ? .trailing : .leading, spacing: 4) {
+            HStack(alignment: .bottom, spacing: 0) {
+                if message.isFromCurrentUser {
+                    Spacer(minLength: 60)
+                }
+                
+                VStack(alignment: message.isFromCurrentUser ? .trailing : .leading, spacing: 4) {
                 // Sender name (only for messages from others)
                 if !message.isFromCurrentUser, let senderName = message.senderName {
                     Text(senderName)
@@ -28,6 +59,10 @@ struct MessageBubbleView: View {
                 }
                 
                 VStack(alignment: .leading, spacing: 8) {
+                    // Reply preview (if this message is a reply)
+                    if let reply = message.replyTo {
+                        replyPreviewView(reply: reply)
+                    }
                     if showEncryptedData {
                         // Encrypted text
                         ExpandableSHAView(
@@ -52,7 +87,6 @@ struct MessageBubbleView: View {
                     Text(message.text)
                         .font(.body)
                         .foregroundColor(.white)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
@@ -72,16 +106,107 @@ struct MessageBubbleView: View {
                 .cornerRadius(18)
                 .frame(maxWidth: UIScreen.main.bounds.width * 0.75, alignment: message.isFromCurrentUser ? .trailing : .leading)
                 
-                // Timestamp
-                Text(formatTime(message.timestamp))
-                    .font(.caption2)
-                    .foregroundColor(.gray)
+                // Timestamp (only if should show)
+                if shouldShowTimestamp {
+                    Text(formatTime(message.timestamp))
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                }
             }
+                
+                if !message.isFromCurrentUser {
+                    Spacer(minLength: 60)
+                }
+            }
+            .offset(x: offset)
+            .gesture(
+                onReply != nil ? DragGesture(minimumDistance: 15)
+                    .onChanged { gesture in
+                        let translation = gesture.translation
+                        
+                        // Check if swipe is more horizontal than vertical
+                        let isHorizontalSwipe = abs(translation.width) > abs(translation.height) * 1.5
+                        
+                        // Only allow left swipe that's clearly horizontal
+                        if translation.width < 0 && isHorizontalSwipe {
+                            offset = translation.width
+                            isSwiping = true
+                            
+                            // Trigger haptic feedback when crossing threshold
+                            if translation.width < triggerHapticThreshold && !hasTriggeredHaptic {
+                                let generator = UIImpactFeedbackGenerator(style: .medium)
+                                generator.impactOccurred()
+                                hasTriggeredHaptic = true
+                            }
+                        }
+                    }
+                    .onEnded { gesture in
+                        isSwiping = false
+                        
+                        // If swiped past threshold, trigger reply
+                        if offset < swipeThreshold {
+                            onReply?(message)
+                            // Stronger haptic feedback
+                            let generator = UIImpactFeedbackGenerator(style: .heavy)
+                            generator.impactOccurred()
+                        }
+                        
+                        // Animate back to original position
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            offset = 0
+                            hasTriggeredHaptic = false
+                        }
+                    }
+                : nil
+            )
+        }
+    }
+    
+    // MARK: - Reply Preview
+    
+    @ViewBuilder
+    private func replyPreviewView(reply: MessageReply) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            // Vertical line on the left
+            Rectangle()
+                .fill(Color.purple.opacity(0.8))
+                .frame(width: 2)
             
-            if !message.isFromCurrentUser {
-                Spacer(minLength: 60)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(reply.senderName)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.purple.opacity(0.9))
+                
+                Text(decryptReplyText(reply.text))
+                    .font(.system(size: 10))
+                    .foregroundColor(.white.opacity(0.6))
+                    .lineLimit(1)
             }
         }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Color.black.opacity(0.15))
+        .cornerRadius(6)
+    }
+    
+    private func decryptReplyText(_ text: String) -> String {
+        // Пытаемся расшифровать (fallback если текст всё ещё зашифрован)
+        guard let key = encryptionKey else {
+            return text
+        }
+        
+        // Проверяем, выглядит ли текст как зашифрованный (содержит ':')
+        if text.contains(":") {
+            do {
+                return try CryptoUtils.decrypt(text, keyPhrase: key)
+            } catch {
+                // Если не удалось расшифровать, возвращаем как есть
+                return text
+            }
+        }
+        
+        // Текст уже расшифрован
+        return text
     }
     
     private func formatTime(_ date: Date) -> String {
@@ -106,7 +231,12 @@ struct MessageBubbleView: View {
                     isFromCurrentUser: false,
                     senderName: "Alice"
                 ),
-                showEncryptedData: false
+                showEncryptedData: false,
+                encryptionKey: nil,
+                shouldShowTimestamp: true,
+                onReply: { message in
+                    print("Reply to: \(message.text)")
+                }
             )
             
             MessageBubbleView(
@@ -116,9 +246,20 @@ struct MessageBubbleView: View {
                     shaHash: "0468699d3b3be251441ec0da5006e5143a0096b22e86326ca8a16bc5a248ae5b",
                     timestamp: Date(),
                     isFromCurrentUser: true,
-                    senderName: "You"
+                    senderName: "You",
+                    replyTo: MessageReply(
+                        messageId: "123",
+                        text: "Hello! This is a test message.",
+                        senderName: "Alice",
+                        timestamp: Date().addingTimeInterval(-300)
+                    )
                 ),
-                showEncryptedData: false
+                showEncryptedData: false,
+                encryptionKey: nil,
+                shouldShowTimestamp: true,
+                onReply: { message in
+                    print("Reply to: \(message.text)")
+                }
             )
         }
         .padding()

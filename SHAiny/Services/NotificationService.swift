@@ -119,7 +119,7 @@ class NotificationService: NSObject, ObservableObject {
             
             content.body = messageText
             content.sound = .default
-            content.badge = 1
+            // Badge будет обновлен автоматически через updateBadgeCount
             
             // Добавляем chatId в userInfo для навигации
             content.userInfo = ["chatId": chatId]
@@ -161,6 +161,14 @@ class NotificationService: NSObject, ObservableObject {
             
             self.center.removeDeliveredNotifications(withIdentifiers: identifiersToRemove)
             print("🧹 Cleared \(identifiersToRemove.count) notifications for chat \(chatId)")
+        }
+    }
+    
+    // Обновить badge count на основе общего количества непрочитанных сообщений
+    func updateBadgeCount(totalUnread: Int) {
+        DispatchQueue.main.async {
+            UIApplication.shared.applicationIconBadgeNumber = totalUnread
+            print("🔢 Badge updated: \(totalUnread)")
         }
     }
 }

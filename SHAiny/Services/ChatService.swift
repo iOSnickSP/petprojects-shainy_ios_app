@@ -137,6 +137,14 @@ class ChatService {
         let timestamp: Double
         let senderName: String?
         let isSystem: Bool?
+        let replyTo: ReplyDTO?
+        
+        struct ReplyDTO: Codable {
+            let messageId: String
+            let text: String
+            let senderName: String
+            let timestamp: Double
+        }
     }
     
     // Получение сообщений чата с пагинацией
@@ -207,6 +215,17 @@ class ChatService {
                         }
                     }
                     
+                    // Process reply if present
+                    var replyTo: MessageReply? = nil
+                    if let replyDTO = dto.replyTo {
+                        replyTo = MessageReply(
+                            messageId: replyDTO.messageId,
+                            text: replyDTO.text,
+                            senderName: replyDTO.senderName,
+                            timestamp: Date(timeIntervalSince1970: replyDTO.timestamp / 1000)
+                        )
+                    }
+                    
                     let message = Message(
                         id: UUID(uuidString: dto.id) ?? UUID(),
                         text: decryptedText,
@@ -214,7 +233,8 @@ class ChatService {
                         shaHash: dto.shaHash,
                         timestamp: Date(timeIntervalSince1970: dto.timestamp / 1000),
                         isFromCurrentUser: (dto.userId == currentUserId),
-                        senderName: dto.senderName
+                        senderName: dto.senderName,
+                        replyTo: replyTo
                     )
                     
                     print("   Message created with encrypted text length: \(message.encryptedText.count)")

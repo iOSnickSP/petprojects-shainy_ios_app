@@ -11,6 +11,7 @@ struct ContentView: View {
     @StateObject private var viewModel = ChatListViewModel()
     @State private var keyPhrase = ""
     @State private var navigationToChatId: String? = nil
+    @Environment(\.scenePhase) var scenePhase
     
     var body: some View {
         NavigationView {
@@ -95,6 +96,12 @@ struct ContentView: View {
                             viewModel.loadChats()
                         }
                     }
+                }
+            }
+            .onChange(of: scenePhase) { newPhase in
+                // Обновляем чаты и badge когда приложение становится активным
+                if newPhase == .active {
+                    viewModel.loadChats(preserveIds: true)
                 }
             }
         }

@@ -21,6 +21,7 @@ final class ChatListViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private let chatService = ChatService.shared
     private let webSocketService = WebSocketService.shared
+    private let notificationService = NotificationService.shared
     
     // Разделенные чаты
     var globalChats: [Chat] {
@@ -84,6 +85,9 @@ final class ChatListViewModel: ObservableObject {
                         self.chats = self.sortChats(fetchedChats)
                     }
                     self.isLoading = false
+                    
+                    // Обновляем badge после загрузки чатов
+                    self.updateBadge()
                 }
             } catch {
                 await MainActor.run {
@@ -229,6 +233,9 @@ final class ChatListViewModel: ObservableObject {
         }
         
         print("✅ Chat preview updated locally")
+        
+        // Обновляем badge после изменения непрочитанных
+        updateBadge()
     }
     
     func didTapNewChat() {
@@ -288,6 +295,9 @@ final class ChatListViewModel: ObservableObject {
     }
     
     func markChatAsRead(chatId: String) {
+        // Очищаем уведомления для этого чата
+        notificationService.clearNotifications(for: chatId)
+        
         Task {
             do {
                 try await chatService.markChatAsRead(chatId: chatId)
@@ -310,6 +320,9 @@ final class ChatListViewModel: ObservableObject {
                             unreadCount: 0
                         )
                         self.chats[index] = updatedChat
+                        
+                        // Обновляем badge после прочтения
+                        self.updateBadge()
                     }
                 }
                 
@@ -318,6 +331,12 @@ final class ChatListViewModel: ObservableObject {
                 print("❌ Failed to mark chat as read: \(error.localizedDescription)")
             }
         }
+    }
+    
+    // Обновить badge count на основе общего количества непрочитанных
+    private func updateBadge() {
+        let totalUnread = chats.reduce(0) { $0 + $1.unreadCount }
+        notificationService.updateBadgeCount(totalUnread: totalUnread)
     }
     
     func joinChat(chatId: String, keyPhrase: String) async -> String? {

@@ -38,10 +38,19 @@ struct ChatView: View {
             // Messages
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(spacing: 12) {
-                        ForEach(viewModel.messages) { message in
-                            MessageBubbleView(message: message, showEncryptedData: showEncryptedData)
-                                .id(message.id)
+                    LazyVStack(spacing: 6) {
+                        ForEach(Array(viewModel.messages.enumerated()), id: \.element.id) { index, message in
+                            MessageBubbleView(
+                                message: message,
+                                showEncryptedData: showEncryptedData,
+                                encryptionKey: viewModel.chat.encryptionKey,
+                                shouldShowTimestamp: shouldShowTimestamp(for: message, at: index),
+                                onReply: { replyMessage in
+                                    viewModel.setReply(to: replyMessage)
+                                    isInputFocused = true
+                                }
+                            )
+                            .id(message.id)
                         }
                     }
                     .padding(.horizontal, 16)
@@ -49,6 +58,15 @@ struct ChatView: View {
                     .padding(.bottom, keyboardHeight > 0 ? keyboardHeight - 100 : 0)
                 }
                 .contentShape(Rectangle())
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 20)
+                        .onChanged { gesture in
+                            // Hide keyboard on downward swipe
+                            if gesture.translation.height > 10 {
+                                isInputFocused = false
+                            }
+                        }
+                )
                 .onTapGesture {
                     isInputFocused = false
                 }
@@ -212,28 +230,86 @@ struct ChatView: View {
     }
     
     private var messageInputView: some View {
-        HStack(spacing: 12) {
-            TextField("Message", text: $viewModel.messageText, axis: .vertical)
-                .textFieldStyle(.plain)
-                .padding(12)
-                .background(Color(red: 0.15, green: 0.15, blue: 0.17))
-                .cornerRadius(20)
-                .lineLimit(1...6)
-                .focused($isInputFocused)
-                .foregroundColor(.white)
+        VStack(spacing: 0) {
+            // Reply preview (if replying to a message)
+            if let replyingTo = viewModel.replyingTo {
+                replyPreviewBar(message: replyingTo)
+            }
+            
+            // Input field
+            HStack(spacing: 12) {
+                TextField("Message", text: $viewModel.messageText, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .padding(12)
+                    .background(Color(red: 0.15, green: 0.15, blue: 0.17))
+                    .cornerRadius(20)
+                    .lineLimit(1...6)
+                    .focused($isInputFocused)
+                    .foregroundColor(.white)
+                
+                Button(action: {
+                    viewModel.sendMessage()
+                }) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 32))
+                        .foregroundColor(viewModel.messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .gray : .blue)
+                }
+                .disabled(viewModel.messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+        }
+        .background(Color(red: 0.1, green: 0.1, blue: 0.12))
+    }
+    
+    @ViewBuilder
+    private func replyPreviewBar(message: Message) -> some View {
+        HStack(spacing: 6) {
+            // Vertical line indicator
+            Rectangle()
+                .fill(Color.purple)
+                .frame(width: 2)
+            
+            VStack(alignment: .leading, spacing: 0) {
+                Text("\(message.senderName ?? "Unknown")")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.purple)
+                
+                Text(message.text)
+                    .font(.system(size: 11))
+                    .foregroundColor(.gray)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             
             Button(action: {
-                viewModel.sendMessage()
+                viewModel.cancelReply()
             }) {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 32))
-                    .foregroundColor(viewModel.messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .gray : .blue)
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(.gray)
             }
-            .disabled(viewModel.messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(Color(red: 0.1, green: 0.1, blue: 0.12))
+        .frame(height: 40)
+        .padding(.horizontal, 10)
+        .background(Color(red: 0.15, green: 0.15, blue: 0.17))
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+    
+    private func shouldShowTimestamp(for message: Message, at index: Int) -> Bool {
+        // Всегда показываем timestamp для последнего сообщения
+        guard index < viewModel.messages.count - 1 else { return true }
+        
+        let nextMessage = viewModel.messages[index + 1]
+        
+        // Если следующее сообщение от другого пользователя - показываем timestamp
+        if message.senderName != nextMessage.senderName {
+            return true
+        }
+        
+        // Если разница между сообщениями больше 1 минуты - показываем timestamp
+        let timeDifference = nextMessage.timestamp.timeIntervalSince(message.timestamp)
+        return timeDifference >= 60
     }
     
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool = true) {

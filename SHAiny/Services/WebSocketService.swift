@@ -28,6 +28,14 @@ struct IncomingWSMessage: Codable {
         let text: String
         let shaHash: String
         let timestamp: Double
+        let replyTo: ReplyDTO?
+        
+        struct ReplyDTO: Codable {
+            let messageId: String
+            let text: String
+            let senderName: String
+            let timestamp: Double
+        }
     }
 }
 
@@ -89,20 +97,30 @@ class WebSocketService: NSObject, ObservableObject {
         print("🔐 Authenticating WebSocket...")
     }
     
-    func sendChatMessage(chatId: String, encryptedText: String, shaHash: String) {
+    func sendChatMessage(chatId: String, encryptedText: String, shaHash: String, replyTo: [String: Any]? = nil) {
         guard isConnected else {
             print("❌ Cannot send message: WebSocket not connected!")
             return
         }
         
-        let message: [String: Any] = [
+        var message: [String: Any] = [
             "type": "send_message",
             "chatId": chatId,
             "encryptedText": encryptedText,
             "shaHash": shaHash
         ]
+        
+        // Add reply information if present
+        if let replyData = replyTo {
+            message["replyTo"] = replyData
+        }
+        
         sendMessage(message)
-        print("📤 Sending message to chat: \(chatId)")
+        if replyTo != nil {
+            print("📤 Sending reply to chat: \(chatId)")
+        } else {
+            print("📤 Sending message to chat: \(chatId)")
+        }
     }
     
     func refreshChats() {
@@ -209,6 +227,17 @@ class WebSocketService: NSObject, ObservableObject {
         let currentUserId = KeychainService.shared.getUserIdFromToken()
         let isFromCurrentUser = (dto.userId == currentUserId)
         
+        // Convert reply DTO if present
+        var replyTo: MessageReply? = nil
+        if let replyDTO = dto.replyTo {
+            replyTo = MessageReply(
+                messageId: replyDTO.messageId,
+                text: replyDTO.text,
+                senderName: replyDTO.senderName,
+                timestamp: Date(timeIntervalSince1970: replyDTO.timestamp / 1000)
+            )
+        }
+        
         return Message(
             id: UUID(uuidString: dto.id) ?? UUID(),
             text: dto.text, // Encrypted text
@@ -216,7 +245,8 @@ class WebSocketService: NSObject, ObservableObject {
             shaHash: dto.shaHash,
             timestamp: Date(timeIntervalSince1970: dto.timestamp / 1000),
             isFromCurrentUser: isFromCurrentUser,
-            senderName: dto.senderName
+            senderName: dto.senderName,
+            replyTo: replyTo
         )
     }
     

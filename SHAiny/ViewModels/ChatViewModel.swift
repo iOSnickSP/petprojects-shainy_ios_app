@@ -18,6 +18,7 @@ final class ChatViewModel: ObservableObject {
     @Driver var hasMoreMessages: Bool = false
     @Driver var chatName: String = ""
     @Published var shouldShowNicknameDialog: Bool = false
+    @Published var replyingTo: Message? = nil
     
     private var cancellables = Set<AnyCancellable>()
     private let chatService = ChatService.shared
@@ -97,6 +98,23 @@ final class ChatViewModel: ObservableObject {
                     }
                 }
                 
+                // Обрабатываем reply (расшифровываем текст если есть)
+                var replyTo = incomingMessage.replyTo
+                if let reply = incomingMessage.replyTo, let encryptionKey = self.chat.encryptionKey {
+                    do {
+                        let decryptedReplyText = try CryptoUtils.decrypt(reply.text, keyPhrase: encryptionKey)
+                        replyTo = MessageReply(
+                            messageId: reply.messageId,
+                            text: decryptedReplyText, // Сохраняем расшифрованный текст
+                            senderName: reply.senderName,
+                            timestamp: reply.timestamp
+                        )
+                        print("✅ Reply text decrypted in real-time")
+                    } catch {
+                        print("⚠️ Failed to decrypt reply text: \(error.localizedDescription)")
+                    }
+                }
+                
                 // Создаем сообщение (isFromCurrentUser уже определен в WebSocketService)
                 let message = Message(
                     id: incomingMessage.id,
@@ -105,7 +123,8 @@ final class ChatViewModel: ObservableObject {
                     shaHash: incomingMessage.shaHash,
                     timestamp: incomingMessage.timestamp,
                     isFromCurrentUser: incomingMessage.isFromCurrentUser,
-                    senderName: incomingMessage.senderName
+                    senderName: incomingMessage.senderName,
+                    replyTo: replyTo
                 )
                 
                 // Проверяем, нет ли уже этого сообщения в списке
@@ -194,6 +213,14 @@ final class ChatViewModel: ObservableObject {
     }
     
     private func sendMessageInternal(_ textToSend: String) async {
+        // Capture reply info before sending
+        let replyInfo = replyingTo
+        
+        // Clear reply state immediately
+        await MainActor.run {
+            self.replyingTo = nil
+        }
+        
         do {
             // Шифруем сообщение
             var encryptedText = textToSend
@@ -204,19 +231,37 @@ final class ChatViewModel: ObservableObject {
             // Генерируем SHA hash от оригинального текста
             let shaHash = CryptoUtils.generateHash(textToSend)
             
+            // Prepare reply data if replying to a message
+            var replyToData: [String: Any]? = nil
+            if let reply = replyInfo {
+                replyToData = [
+                    "messageId": reply.id.uuidString,
+                    "text": reply.encryptedText, // Send encrypted text
+                    "senderName": reply.senderName ?? "Unknown",
+                    "timestamp": reply.timestamp.timeIntervalSince1970 * 1000 // Convert to milliseconds
+                ]
+            }
+            
             // Отправляем через WebSocket
             webSocketService.sendChatMessage(
                 chatId: chat.chatId,
                 encryptedText: encryptedText,
-                shaHash: shaHash
+                shaHash: shaHash,
+                replyTo: replyToData
             )
             
-            print("📤 Message sent to chat: \(chat.name)")
+            if replyInfo != nil {
+                print("📤 Reply sent to chat: \(chat.name)")
+            } else {
+                print("📤 Message sent to chat: \(chat.name)")
+            }
         } catch {
             await MainActor.run {
                 print("❌ Failed to send message: \(error.localizedDescription)")
                 // Возвращаем текст обратно в поле ввода при ошибке
                 self.messageText = textToSend
+                // Restore reply state on error
+                self.replyingTo = replyInfo
             }
         }
     }
@@ -275,6 +320,20 @@ final class ChatViewModel: ObservableObject {
     func cancelPendingMessage() {
         pendingMessageText = nil
         // messageText остается как есть - не очищаем
+    }
+    
+    // MARK: - Reply Management
+    
+    /// Установить сообщение для ответа
+    func setReply(to message: Message) {
+        replyingTo = message
+        print("📝 Replying to message from \(message.senderName ?? "unknown")")
+    }
+    
+    /// Отменить ответ
+    func cancelReply() {
+        replyingTo = nil
+        print("❌ Reply cancelled")
     }
 }
 
