@@ -20,6 +20,9 @@ struct IncomingWSMessage: Codable {
     let message: MessageDTO?
     let error: String?
     let userId: String?
+    let participantsCount: Int?
+    let authorId: String? // For permission_granted event
+    let unreadCount: Int? // For permission_granted event
     
     struct MessageDTO: Codable {
         let id: String
@@ -59,6 +62,16 @@ class WebSocketService: NSObject, ObservableObject {
     private let chatsUpdatedSubject = PassthroughSubject<Void, Never>()
     var chatsUpdatedPublisher: AnyPublisher<Void, Never> {
         chatsUpdatedSubject.eraseToAnyPublisher()
+    }
+    
+    private let participantsUpdatedSubject = PassthroughSubject<(chatId: String, count: Int), Never>()
+    var participantsUpdatedPublisher: AnyPublisher<(chatId: String, count: Int), Never> {
+        participantsUpdatedSubject.eraseToAnyPublisher()
+    }
+    
+    private let permissionGrantedSubject = PassthroughSubject<(chatId: String, authorId: String, unreadCount: Int), Never>()
+    var permissionGrantedPublisher: AnyPublisher<(chatId: String, authorId: String, unreadCount: Int), Never> {
+        permissionGrantedSubject.eraseToAnyPublisher()
     }
     
     private override init() {
@@ -209,6 +222,19 @@ class WebSocketService: NSObject, ObservableObject {
                 case "chats_updated":
                     self.chatsUpdatedSubject.send()
                     print("🔄 Chats updated notification")
+                    
+                case "participants_updated":
+                    if let chatId = incoming.chatId, let count = incoming.participantsCount {
+                        self.participantsUpdatedSubject.send((chatId: chatId, count: count))
+                        print("👥 Participants updated for chat \(chatId): \(count)")
+                    }
+                    
+                case "permission_granted":
+                    if let chatId = incoming.chatId, let authorId = incoming.authorId {
+                        let unreadCount = incoming.unreadCount ?? 0
+                        self.permissionGrantedSubject.send((chatId: chatId, authorId: authorId, unreadCount: unreadCount))
+                        print("🔓 Permission granted in chat \(chatId) by author \(authorId), unreadCount: \(unreadCount)")
+                    }
                     
                 case "error":
                     print("❌ WebSocket error: \(incoming.error ?? "unknown")")

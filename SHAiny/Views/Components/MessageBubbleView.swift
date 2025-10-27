@@ -14,6 +14,7 @@ struct MessageBubbleView: View {
     let showEncryptedData: Bool
     let encryptionKey: String?
     let shouldShowTimestamp: Bool
+    let shouldShowSenderName: Bool
     let onReply: ((Message) -> Void)?
     
     @State private var offset: CGFloat = 0
@@ -23,11 +24,12 @@ struct MessageBubbleView: View {
     private let triggerHapticThreshold: CGFloat = -35
     @State private var hasTriggeredHaptic = false
     
-    init(message: Message, showEncryptedData: Bool, encryptionKey: String? = nil, shouldShowTimestamp: Bool = true, onReply: ((Message) -> Void)? = nil) {
+    init(message: Message, showEncryptedData: Bool, encryptionKey: String? = nil, shouldShowTimestamp: Bool = true, shouldShowSenderName: Bool = true, onReply: ((Message) -> Void)? = nil) {
         self.message = message
         self.showEncryptedData = showEncryptedData
         self.encryptionKey = encryptionKey
         self.shouldShowTimestamp = shouldShowTimestamp
+        self.shouldShowSenderName = shouldShowSenderName
         self.onReply = onReply
     }
     
@@ -51,9 +53,9 @@ struct MessageBubbleView: View {
                 }
                 
                 VStack(alignment: message.isFromCurrentUser ? .trailing : .leading, spacing: 4) {
-                // Sender name (only for messages from others)
-                if !message.isFromCurrentUser, let senderName = message.senderName {
-                    Text(senderName)
+                // Sender name (with "You" indicator for own messages, only if should show)
+                if shouldShowSenderName, let senderName = message.senderName {
+                    Text(message.isFromCurrentUser ? "\(senderName) (You)" : senderName)
                         .font(.caption)
                         .foregroundColor(.purple.opacity(0.8))
                 }
@@ -234,6 +236,7 @@ struct MessageBubbleView: View {
                 showEncryptedData: false,
                 encryptionKey: nil,
                 shouldShowTimestamp: true,
+                shouldShowSenderName: true,
                 onReply: { message in
                     print("Reply to: \(message.text)")
                 }
@@ -257,6 +260,7 @@ struct MessageBubbleView: View {
                 showEncryptedData: false,
                 encryptionKey: nil,
                 shouldShowTimestamp: true,
+                shouldShowSenderName: true,
                 onReply: { message in
                     print("Reply to: \(message.text)")
                 }

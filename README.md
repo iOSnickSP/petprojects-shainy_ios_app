@@ -16,7 +16,7 @@
 - 🔐 **End-to-End Encryption** - AES-256-CBC encryption for all private messages
 - 🔗 **SHA-256 Integrity** - Every message is hashed to ensure integrity
 - ⚡ **Real-Time Messaging** - WebSocket-based instant communication
-- 🔔 **Push Notifications** - APNs integration for message alerts
+- 🔔 **Push Notifications** - APNs integration with accurate badge counts
 - 🎭 **Anonymous Auth** - Code phrase-based authentication system
 - 🏷️ **Custom Chat Names** - Encrypted names for better organization
 - 📱 **Modern UI** - Beautiful SwiftUI interface with dark mode
@@ -124,7 +124,10 @@ SHAiny/
 │   ├── AuthService.swift     # Authentication API
 │   ├── ChatService.swift     # Chat management API
 │   ├── WebSocketService.swift # Real-time messaging
-│   └── NotificationService.swift # Push notifications
+│   ├── NotificationService.swift # Push notifications
+│   ├── BadgeManager.swift    # Centralized badge management
+│   ├── KeychainService.swift # Secure storage
+│   └── SettingsService.swift # App settings
 │
 ├── Utils/                     # Utilities
 │   ├── CryptoUtils.swift     # Encryption/hashing
@@ -219,6 +222,8 @@ All services log with emojis for easy filtering:
 - 💬 Chat operations
 - 📤 Sending messages
 - 📩 Receiving messages
+- 🔢 Badge updates
+- 🔄 Badge synchronization
 - ✅ Success
 - ❌ Errors
 

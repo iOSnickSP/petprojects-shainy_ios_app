@@ -60,6 +60,7 @@ SHAiny/
 │   ├── ChatService.swift           # Chat management API
 │   ├── WebSocketService.swift      # Real-time messaging
 │   ├── NotificationService.swift   # Push notifications (APNs)
+│   ├── BadgeManager.swift          # Centralized badge management
 │   ├── KeychainService.swift       # Secure token storage
 │   ├── SettingsService.swift       # App settings
 │   ├── ChatKeysStorage.swift       # Encryption keys storage
@@ -213,11 +214,14 @@ Flow:
 2. Register device with APNs → receive device token
 3. Send device token to backend
 4. Backend stores token for user
-5. When new message arrives: backend sends push notification
+5. When new message arrives:
+   - Backend calculates total unread count for recipient
+   - Sends push notification with accurate badge count
 6. App receives notification:
    - If app open + chat open: just decrypt and show
-   - If app open + chat closed: show in-app banner + badge
-   - If app closed: show system notification
+   - If app open + chat closed: show in-app banner + update badge
+   - If app closed: show system notification with badge
+   - Badge automatically synced from payload
 ```
 
 **Notification Payload**:
@@ -228,11 +232,55 @@ Flow:
       "title": "ChatName",
       "body": "SenderName: Message preview"
     },
-    "badge": 1,
+    "badge": 5,
     "sound": "default"
   },
   "chatId": "chat-id-here"
 }
+```
+
+### Badge Management System
+
+**Centralized Architecture**:
+
+The app uses `BadgeManager` as a single source of truth for badge count management.
+
+```swift
+BadgeManager (Singleton)
+├── Tracks current badge count
+├── Synchronizes with system badge on app lifecycle
+├── Validates badge persistence (auto-restore if reset)
+└── Integrates with chat unread counts
+
+Backend Integration:
+├── getTotalUnreadCount(userId) calculates across all chats
+├── Badge sent in push notification payload
+└── iOS syncs badge from remote notifications
+```
+
+**Key Features**:
+- ✅ **Accurate Count**: Badge always reflects real unread messages across all chats
+- ✅ **Auto-Sync**: Syncs with system on app launch and when becoming active
+- ✅ **Race Condition Prevention**: Timestamp tracking prevents conflicting updates
+- ✅ **Persistence Validation**: Checks badge wasn't reset by system after 150ms
+- ✅ **Thread-Safe**: All operations guaranteed on main thread
+
+**Badge Update Flow**:
+```swift
+1. New message arrives → ChatListViewModel updates unreadCount
+2. ChatListViewModel calls BadgeManager.updateFromChats(chats)
+3. BadgeManager calculates total: chats.reduce(0) { $0 + $1.unreadCount }
+4. Sets UIApplication.shared.applicationIconBadgeNumber
+5. Validates badge after 150ms, restores if mismatch detected
+```
+
+**Remote Notification Badge**:
+```swift
+1. Backend calculates db.getTotalUnreadCount(userId)
+2. Includes badge in APNs payload
+3. iOS displays notification with badge
+4. App receives notification → BadgeManager syncs from payload
+5. Badge count stays accurate even when app is closed
 ```
 
 ### Storage Architecture

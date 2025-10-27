@@ -22,6 +22,7 @@ final class ChatListViewModel: ObservableObject {
     private let chatService = ChatService.shared
     private let webSocketService = WebSocketService.shared
     private let notificationService = NotificationService.shared
+    private let badgeManager = BadgeManager.shared
     
     // Разделенные чаты
     var globalChats: [Chat] {
@@ -160,6 +161,77 @@ final class ChatListViewModel: ObservableObject {
                 self.updateChatPreview(chatId: chatId, message: message)
             }
             .store(in: &cancellables)
+        
+        // Подписываемся на обновления количества участников
+        webSocketService.participantsUpdatedPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] (chatId, count) in
+                guard let self = self else { return }
+                
+                print("👥 Participants count updated for chat: \(chatId), count: \(count)")
+                
+                self.updateParticipantsCount(chatId: chatId, count: count)
+            }
+            .store(in: &cancellables)
+        
+        // Подписываемся на событие получения разрешения видеть сообщения
+        webSocketService.permissionGrantedPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] (chatId, authorId, unreadCount) in
+                guard let self = self else { return }
+                
+                print("🔓 Permission granted in chat \(chatId), reloading chat list... New unreadCount: \(unreadCount)")
+                
+                // Обновляем unreadCount для этого чата
+                if let index = self.chats.firstIndex(where: { $0.chatId == chatId }) {
+                    self.chats[index] = Chat(
+                        id: self.chats[index].id,
+                        chatId: self.chats[index].chatId,
+                        name: self.chats[index].name,
+                        lastMessage: self.chats[index].lastMessage,
+                        lastMessageSender: self.chats[index].lastMessageSender,
+                        timestamp: self.chats[index].timestamp,
+                        participantsCount: self.chats[index].participantsCount,
+                        isGlobal: self.chats[index].isGlobal,
+                        isReadOnly: self.chats[index].isReadOnly,
+                        encryptionKey: self.chats[index].encryptionKey,
+                        hasCustomName: self.chats[index].hasCustomName,
+                        unreadCount: unreadCount
+                    )
+                    print("📊 Updated unreadCount for chat \(chatId) to \(unreadCount)")
+                }
+                
+                // Также перезагружаем список чатов чтобы обновить lastMessage
+                self.loadChats(preserveIds: true)
+            }
+            .store(in: &cancellables)
+    }
+    
+    private func updateParticipantsCount(chatId: String, count: Int) {
+        guard let index = self.chats.firstIndex(where: { $0.chatId == chatId }) else {
+            return
+        }
+        
+        let chat = self.chats[index]
+        
+        // Создаем обновленный чат с новым счетчиком участников
+        let updatedChat = Chat(
+            id: chat.id,
+            chatId: chat.chatId,
+            name: chat.name,
+            lastMessage: chat.lastMessage,
+            lastMessageSender: chat.lastMessageSender,
+            timestamp: chat.timestamp,
+            participantsCount: count,
+            isGlobal: chat.isGlobal,
+            isReadOnly: chat.isReadOnly,
+            encryptionKey: chat.encryptionKey,
+            hasCustomName: chat.hasCustomName,
+            unreadCount: chat.unreadCount
+        )
+        
+        self.chats[index] = updatedChat
+        print("✅ Updated participants count for chat \(chatId): \(count)")
     }
     
     private func updateChatPreview(chatId: String, message: Message) {
@@ -334,9 +406,8 @@ final class ChatListViewModel: ObservableObject {
     }
     
     // Обновить badge count на основе общего количества непрочитанных
-    private func updateBadge() {
-        let totalUnread = chats.reduce(0) { $0 + $1.unreadCount }
-        notificationService.updateBadgeCount(totalUnread: totalUnread)
+    func updateBadge() {
+        badgeManager.updateFromChats(chats)
     }
     
     func joinChat(chatId: String, keyPhrase: String) async -> String? {

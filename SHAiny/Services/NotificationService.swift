@@ -16,6 +16,7 @@ class NotificationService: NSObject, ObservableObject {
     @Published var currentOpenChatId: String? = nil
     @Published var deviceToken: String? = nil
     private let center = UNUserNotificationCenter.current()
+    private let badgeManager = BadgeManager.shared
     
     private var baseURL: String {
         return SettingsService.shared.serverURL
@@ -27,13 +28,17 @@ class NotificationService: NSObject, ObservableObject {
     }
     
     // Запрос разрешения на уведомления + регистрация для remote notifications
-    func requestAuthorization() {
+    func requestAuthorization(onGranted: (() -> Void)? = nil) {
         center.requestAuthorization(options: [.alert, .sound, .badge]) { [weak self] granted, error in
             if granted {
                 print("✅ Notification permission granted")
                 // Регистрируем для remote notifications
                 DispatchQueue.main.async {
                     UIApplication.shared.registerForRemoteNotifications()
+                    // Вызываем callback после получения разрешений
+                    onGranted?()
+                    // Отправляем уведомление об изменении статуса разрешений
+                    NotificationCenter.default.post(name: NSNotification.Name("NotificationPermissionGranted"), object: nil)
                 }
             } else if let error = error {
                 print("❌ Notification permission error: \(error.localizedDescription)")
@@ -119,7 +124,7 @@ class NotificationService: NSObject, ObservableObject {
             
             content.body = messageText
             content.sound = .default
-            // Badge будет обновлен автоматически через updateBadgeCount
+            content.badge = NSNumber(value: self?.badgeManager.currentBadgeCount ?? 0)
             
             // Добавляем chatId в userInfo для навигации
             content.userInfo = ["chatId": chatId]
@@ -143,33 +148,22 @@ class NotificationService: NSObject, ObservableObject {
     
     // Очистить все уведомления
     func clearAllNotifications() {
-        center.removeAllDeliveredNotifications()
-        UIApplication.shared.applicationIconBadgeNumber = 0
+        badgeManager.clearAllNotificationsAndBadge()
     }
     
     // Очистить уведомления для конкретного чата
     func clearNotifications(for chatId: String) {
-        center.getDeliveredNotifications { notifications in
-            let identifiersToRemove = notifications
-                .filter { notification in
-                    if let notificationChatId = notification.request.content.userInfo["chatId"] as? String {
-                        return notificationChatId == chatId
-                    }
-                    return false
-                }
-                .map { $0.request.identifier }
-            
-            self.center.removeDeliveredNotifications(withIdentifiers: identifiersToRemove)
-            print("🧹 Cleared \(identifiersToRemove.count) notifications for chat \(chatId)")
-        }
+        badgeManager.clearNotifications(for: chatId)
     }
     
     // Обновить badge count на основе общего количества непрочитанных сообщений
     func updateBadgeCount(totalUnread: Int) {
-        DispatchQueue.main.async {
-            UIApplication.shared.applicationIconBadgeNumber = totalUnread
-            print("🔢 Badge updated: \(totalUnread)")
-        }
+        badgeManager.setBadge(totalUnread)
+    }
+    
+    // Обновить badge на основе списка чатов
+    func updateBadgeFromChats(_ chats: [Chat]) {
+        badgeManager.updateFromChats(chats)
     }
 }
 
@@ -181,6 +175,11 @@ extension NotificationService: UNUserNotificationCenterDelegate {
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
+        // Обрабатываем badge из payload если это remote notification
+        if let badgeNumber = notification.request.content.badge?.intValue {
+            badgeManager.setBadge(badgeNumber)
+        }
+        
         // В iOS 14+ используем .banner и .sound
         completionHandler([.banner, .sound, .badge])
     }
@@ -192,6 +191,11 @@ extension NotificationService: UNUserNotificationCenterDelegate {
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         let userInfo = response.notification.request.content.userInfo
+        
+        // Обрабатываем badge из payload если это remote notification
+        if let badgeNumber = response.notification.request.content.badge?.intValue {
+            badgeManager.setBadge(badgeNumber)
+        }
         
         if let chatId = userInfo["chatId"] as? String {
             print("📱 User tapped notification for chat: \(chatId)")

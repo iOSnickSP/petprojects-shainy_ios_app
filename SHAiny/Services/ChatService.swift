@@ -535,5 +535,86 @@ class ChatService {
             throw NSError(domain: "ChatService", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Failed to get nickname"])
         }
     }
+    
+    // MARK: - Participants
+    
+    struct ParticipantsResponse: Codable {
+        let participants: [ParticipantDTO]
+    }
+    
+    struct ParticipantDTO: Codable {
+        let userId: String
+        let nickname: String?
+        let joinedAt: Double?
+        let canSeeMyMessages: Bool
+        let isCurrentUser: Bool
+    }
+    
+    /// Получить список участников чата с их статусами видимости сообщений
+    func fetchParticipants(for chatId: String) async throws -> [Participant] {
+        guard let token = KeychainService.shared.getAccessToken() else {
+            throw NSError(domain: "ChatService", code: -1, userInfo: [NSLocalizedDescriptionKey: "No access token"])
+        }
+        
+        let url = URL(string: "\(baseURL)/chat/\(chatId)/participants")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        
+        print("👥 Fetching participants for chat: \(chatId)")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NSError(domain: "ChatService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
+        }
+        
+        if httpResponse.statusCode == 200 {
+            let participantsResponse = try JSONDecoder().decode(ParticipantsResponse.self, from: data)
+            print("✅ Fetched \(participantsResponse.participants.count) participants")
+            
+            return participantsResponse.participants.map { dto in
+                Participant(
+                    userId: dto.userId,
+                    nickname: dto.nickname,
+                    joinedAt: dto.joinedAt,
+                    canSeeMyMessages: dto.canSeeMyMessages,
+                    isCurrentUser: dto.isCurrentUser
+                )
+            }
+        } else {
+            throw NSError(domain: "ChatService", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Failed to fetch participants"])
+        }
+    }
+    
+    /// Разрешить участнику видеть ваши сообщения
+    func grantPermission(to userId: String, in chatId: String) async throws {
+        guard let token = KeychainService.shared.getAccessToken() else {
+            throw NSError(domain: "ChatService", code: -1, userInfo: [NSLocalizedDescriptionKey: "No access token"])
+        }
+        
+        let url = URL(string: "\(baseURL)/chat/\(chatId)/grant-permission")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        
+        let body = ["toUserId": userId]
+        request.httpBody = try JSONEncoder().encode(body)
+        
+        print("✅ Granting message permission to user \(userId) in chat \(chatId)")
+        
+        let (_, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NSError(domain: "ChatService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
+        }
+        
+        if httpResponse.statusCode == 200 {
+            print("✅ Permission granted successfully")
+        } else {
+            throw NSError(domain: "ChatService", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Failed to grant permission"])
+        }
+    }
 }
 

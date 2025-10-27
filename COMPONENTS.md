@@ -174,15 +174,87 @@ Manages push notifications (APNs).
 
 **Key Methods**:
 - `requestAuthorization()`: Ask user for notification permissions
-- `registerDeviceToken(token:)`: Send device token to backend
+- `didRegisterForRemoteNotifications(with:)`: Handle device token
 - `showNewMessageNotification()`: Display local notification
 - `clearNotifications(for:)`: Clear notifications for specific chat
 - `clearAllNotifications()`: Clear all notifications
+- `updateBadgeCount(totalUnread:)`: Update badge (delegates to BadgeManager)
+- `updateBadgeFromChats(_:)`: Update badge from chat array
 
 **Singleton**: `NotificationService.shared`
 
 **Current Open Chat**:
 Property `currentOpenChatId` prevents notifications for currently open chat.
+
+**BadgeManager Integration**:
+All badge operations delegate to `BadgeManager.shared` for centralized management.
+
+### BadgeManager (`Services/BadgeManager.swift`)
+**Centralized manager for app icon badge count.**
+
+**Key Properties**:
+- `currentBadgeCount`: Current badge value (read-only)
+
+**Key Methods**:
+- `setBadge(_:)`: Set badge to specific value
+- `incrementBadge(by:)`: Increase badge by amount
+- `decrementBadge(by:)`: Decrease badge by amount
+- `clearBadge()`: Reset badge to 0
+- `syncWithSystemBadge()`: Sync internal state with system badge
+- `updateFromChats(_:)`: Calculate and set badge from chat array
+- `clearAllNotificationsAndBadge()`: Clear notifications and reset badge
+- `clearNotifications(for:completion:)`: Clear notifications for specific chat
+
+**Singleton**: `BadgeManager.shared`
+
+**Architecture**:
+```swift
+Single Source of Truth for Badge
+├── All badge updates go through BadgeManager
+├── Prevents race conditions with timestamp tracking
+├── Auto-validates badge wasn't reset (150ms check)
+└── Thread-safe (all operations on main thread)
+```
+
+**Usage Pattern**:
+```swift
+// Update from chats (most common)
+badgeManager.updateFromChats(chats)
+
+// Manual operations
+badgeManager.setBadge(5)
+badgeManager.incrementBadge()
+badgeManager.clearBadge()
+
+// Sync with system (on app launch)
+badgeManager.syncWithSystemBadge()
+```
+
+**Race Condition Prevention**:
+Uses timestamp tracking to ensure validation checks only apply to the correct update:
+```swift
+1. setBadge(3) at time T1
+2. setBadge(1) at time T2 (before T1 validation)
+3. T1 validation checks lastUpdateTime != T1 → skips
+4. T2 validation proceeds normally
+```
+
+**Remote Notification Handling**:
+Badge automatically synced from APNs payload via `AppDelegate`:
+```swift
+if let badge = aps["badge"] as? Int {
+    badgeManager.setBadge(badge)
+}
+```
+
+**Backend Integration**:
+Backend calculates accurate badge:
+```javascript
+const totalUnreadCount = db.getTotalUnreadCount(userId);
+await apnsService.sendPushNotification(
+    deviceToken, title, body, payload, totalUnreadCount
+);
+```
 
 ### KeychainService (`Services/KeychainService.swift`)
 Secure storage for access tokens.
@@ -420,9 +492,25 @@ App entry point and root view.
 - Registers `AppDelegate` for APNs callbacks
 
 **AppDelegate**:
-- Requests notification authorization
-- Handles device token registration
-- Handles registration errors
+- **Badge Sync**: Syncs badge with system on launch and when app becomes active
+- **Notification Authorization**: Requests permissions on first launch
+- **Device Token**: Handles APNs token registration/errors
+- **Remote Notifications**: Processes push notifications when app in background
+- **Badge from Payload**: Extracts and syncs badge from notification APS
+- **Deep Linking**: Handles navigation from notification tap
+
+**App Lifecycle Badge Management**:
+```swift
+didFinishLaunching:
+  - badgeManager.syncWithSystemBadge()
+  
+applicationDidBecomeActive:
+  - badgeManager.syncWithSystemBadge()
+  
+didReceiveRemoteNotification:
+  - Extract badge from aps["badge"]
+  - badgeManager.setBadge(badge)
+```
 
 ## Common Patterns
 
@@ -490,8 +578,20 @@ All services print detailed logs with emojis:
 - 🔐 Authentication
 - 💬 Chat operations
 - 📤📩 Message sending/receiving
+- 🔢 Badge updates
+- 🔄 Badge synchronization
+- ⚠️ Badge mismatch detection/restoration
+- 🧹 Notification cleanup
 - ✅ Success
 - ❌ Errors
+
+**Badge Logging Examples**:
+```
+🔢 Badge updated: 0 → 3
+🔄 Badge synced with system: 3
+⚠️ Badge mismatch detected! Expected: 3, actual: 0. Restoring...
+🧹 Cleared 2 notification(s) for chat chat-123
+```
 
 ### Common Issues
 
@@ -513,6 +613,18 @@ All services print detailed logs with emojis:
 - First message in chat requires nickname
 - Dialog should appear automatically
 - Check `ChatViewModel.shouldShowNicknameDialog`
+
+**"Badge not updating"**:
+- Check notification permissions granted
+- Verify backend sends correct badge in push
+- Check logs for "Badge updated" messages
+- Try `badgeManager.syncWithSystemBadge()`
+
+**"Badge shows wrong number"**:
+- Backend calculates `getTotalUnreadCount(userId)`
+- iOS syncs from `chats.reduce(0) { $0 + $1.unreadCount }`
+- Check both match in logs
+- Race condition prevented by timestamp tracking
 
 ## Testing Checklist
 

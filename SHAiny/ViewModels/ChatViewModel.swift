@@ -19,6 +19,8 @@ final class ChatViewModel: ObservableObject {
     @Driver var chatName: String = ""
     @Published var shouldShowNicknameDialog: Bool = false
     @Published var replyingTo: Message? = nil
+    @Published var participants: [Participant] = []
+    @Published var participantsWithoutKey: [Participant] = []
     
     private var cancellables = Set<AnyCancellable>()
     private let chatService = ChatService.shared
@@ -37,6 +39,7 @@ final class ChatViewModel: ObservableObject {
         self.chatName = chat.name
         setupBindings()
         loadMessages()
+        loadParticipants()
         setupWebSocketListener()
     }
     
@@ -132,6 +135,39 @@ final class ChatViewModel: ObservableObject {
                     self.messages.append(message)
                     print("📩 New message added to chat \(self.chat.name)")
                 }
+            }
+            .store(in: &cancellables)
+        
+        // Подписываемся на обновления количества участников
+        webSocketService.participantsUpdatedPublisher
+            .filter { [weak self] (chatId, _) in
+                chatId == self?.chat.chatId
+            }
+            .sink { [weak self] (_, count) in
+                guard let self = self else { return }
+                
+                self.participantsCount = count
+                
+                // Также перезагружаем список участников для обновления плашки
+                self.loadParticipants()
+                
+                print("👥 Participants count updated to \(count) for chat \(self.chat.name)")
+            }
+            .store(in: &cancellables)
+        
+        // Подписываемся на событие получения разрешения видеть сообщения
+        webSocketService.permissionGrantedPublisher
+            .filter { [weak self] (chatId, _, _) in
+                chatId == self?.chat.chatId
+            }
+            .sink { [weak self] (_, authorId, unreadCount) in
+                guard let self = self else { return }
+                
+                print("🔓 Received permission from \(authorId), reloading messages... New unreadCount: \(unreadCount)")
+                
+                // Перезагружаем сообщения и участников
+                self.loadMessages(reset: true)
+                self.loadParticipants()
             }
             .store(in: &cancellables)
     }
@@ -300,6 +336,9 @@ final class ChatViewModel: ObservableObject {
             try await chatService.setNickname(nickname, for: chat.chatId)
             print("✅ Nickname set to: \(nickname)")
             
+            // Перезагружаем участников чтобы обновить никнейм в плашке
+            loadParticipants()
+            
             // После успешной установки никнейма отправляем отложенное сообщение
             if let pendingText = pendingMessageText {
                 await MainActor.run {
@@ -334,6 +373,48 @@ final class ChatViewModel: ObservableObject {
     func cancelReply() {
         replyingTo = nil
         print("❌ Reply cancelled")
+    }
+    
+    // MARK: - Participants Management
+    
+    /// Загрузить список участников чата
+    func loadParticipants() {
+        Task {
+            do {
+                let fetchedParticipants = try await chatService.fetchParticipants(for: chat.chatId)
+                
+                await MainActor.run {
+                    self.participants = fetchedParticipants
+                    self.participantsCount = fetchedParticipants.count
+                    
+                    // Находим участников которые НЕ могут видеть мои сообщения (исключая текущего пользователя)
+                    // И у которых ЕСТЬ никнейм (т.е. они уже попытались написать сообщение)
+                    self.participantsWithoutKey = fetchedParticipants.filter { 
+                        !$0.canSeeMyMessages && !$0.isCurrentUser && $0.nickname != nil
+                    }
+                    
+                    print("👥 Loaded \(fetchedParticipants.count) participants, \(self.participantsWithoutKey.count) cannot see my messages and have nickname")
+                }
+            } catch {
+                print("❌ Failed to load participants: \(error.localizedDescription)")
+            }
+        }
+    }
+    
+    /// Разрешить участнику видеть мои сообщения
+    func shareKey(with participant: Participant) {
+        Task {
+            do {
+                try await chatService.grantPermission(to: participant.userId, in: chat.chatId)
+                
+                // Перезагружаем список участников
+                loadParticipants()
+                
+                print("✅ Permission granted to \(participant.displayName)")
+            } catch {
+                print("❌ Failed to grant permission: \(error.localizedDescription)")
+            }
+        }
     }
 }
 

@@ -35,6 +35,11 @@ struct ChatView: View {
             Divider()
                 .background(Color.gray.opacity(0.3))
             
+            // Key sharing prompt (если есть участники без ключа и это не read-only чат)
+            if !viewModel.participantsWithoutKey.isEmpty && !viewModel.chat.isReadOnly {
+                keySharePromptView
+            }
+            
             // Messages
             ScrollViewReader { proxy in
                 ScrollView {
@@ -45,6 +50,7 @@ struct ChatView: View {
                                 showEncryptedData: showEncryptedData,
                                 encryptionKey: viewModel.chat.encryptionKey,
                                 shouldShowTimestamp: shouldShowTimestamp(for: message, at: index),
+                                shouldShowSenderName: shouldShowSenderName(for: message, at: index),
                                 onReply: { replyMessage in
                                     viewModel.setReply(to: replyMessage)
                                     isInputFocused = true
@@ -205,15 +211,89 @@ struct ChatView: View {
                 .font(.caption)
                 .foregroundColor(.gray)
             
-            Text("\(viewModel.participantsCount) participants")
-                .font(.subheadline)
-                .foregroundColor(.gray)
+            // Показываем предупреждение только если это не read-only чат
+            if viewModel.participantsWithoutKey.isEmpty || viewModel.chat.isReadOnly {
+                Text("\(viewModel.participantsCount) participants")
+                    .font(.subheadline)
+                    .foregroundColor(.gray)
+            } else {
+                let withoutKeyCount = viewModel.participantsWithoutKey.count
+                let pluralSuffix = withoutKeyCount == 1 ? "" : "s"
+                Text("\(viewModel.participantsCount) participants (\(withoutKeyCount) does not see your message\(pluralSuffix))")
+                    .font(.subheadline)
+                    .foregroundColor(.orange)
+            }
             
             Spacer()
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(Color(red: 0.15, green: 0.15, blue: 0.17))
+    }
+    
+    private var keySharePromptView: some View {
+        VStack(spacing: 0) {
+            ForEach(viewModel.participantsWithoutKey) { participant in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "key.fill")
+                            .foregroundColor(.orange)
+                            .font(.subheadline)
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Share your messages with \(participant.displayName)?")
+                                .font(.subheadline)
+                                .foregroundColor(.white)
+                            
+                            Text("They joined after you and can't see your messages yet")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
+                        
+                        Spacer()
+                    }
+                    
+                    HStack(spacing: 12) {
+                        Button(action: {
+                            // Decline - просто скрываем для этого участника
+                            // В идеале можно сохранить это решение локально
+                        }) {
+                            Text("No")
+                                .font(.subheadline)
+                                .foregroundColor(.gray)
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 8)
+                                .background(Color(red: 0.2, green: 0.2, blue: 0.22))
+                                .cornerRadius(8)
+                        }
+                        
+                        Button(action: {
+                            viewModel.shareKey(with: participant)
+                        }) {
+                            Text("Yes, Share")
+                                .font(.subheadline)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 8)
+                                .background(
+                                    LinearGradient(
+                                        colors: [Color.purple, Color.blue],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .cornerRadius(8)
+                        }
+                    }
+                }
+                .padding(12)
+                .background(Color.orange.opacity(0.1))
+                .overlay(
+                    Rectangle()
+                        .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                )
+            }
+        }
     }
     
     private var readOnlyNotice: some View {
@@ -309,6 +389,22 @@ struct ChatView: View {
         
         // Если разница между сообщениями больше 1 минуты - показываем timestamp
         let timeDifference = nextMessage.timestamp.timeIntervalSince(message.timestamp)
+        return timeDifference >= 60
+    }
+    
+    private func shouldShowSenderName(for message: Message, at index: Int) -> Bool {
+        // Всегда показываем имя для первого сообщения
+        guard index > 0 else { return true }
+        
+        let previousMessage = viewModel.messages[index - 1]
+        
+        // Если предыдущее сообщение от другого пользователя - показываем имя
+        if message.senderName != previousMessage.senderName {
+            return true
+        }
+        
+        // Если разница с предыдущим сообщением больше 1 минуты - показываем имя
+        let timeDifference = message.timestamp.timeIntervalSince(previousMessage.timestamp)
         return timeDifference >= 60
     }
     

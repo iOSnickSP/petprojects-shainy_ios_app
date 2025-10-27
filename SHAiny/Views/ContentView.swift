@@ -97,6 +97,17 @@ struct ContentView: View {
                         }
                     }
                 }
+                
+                // Подписываемся на уведомление о получении разрешений
+                NotificationCenter.default.addObserver(
+                    forName: NSNotification.Name("NotificationPermissionGranted"),
+                    object: nil,
+                    queue: .main
+                ) { _ in
+                    // Обновляем badge после получения разрешений
+                    viewModel.updateBadge()
+                    print("🔔 Notification permission granted, badge updated")
+                }
             }
             .onChange(of: scenePhase) { newPhase in
                 // Обновляем чаты и badge когда приложение становится активным
