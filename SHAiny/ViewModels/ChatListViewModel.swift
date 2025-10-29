@@ -205,6 +205,22 @@ final class ChatListViewModel: ObservableObject {
                 self.loadChats(preserveIds: true)
             }
             .store(in: &cancellables)
+        
+        // Подписываемся на событие выхода из чата
+        webSocketService.leftChatPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] chatId in
+                guard let self = self else { return }
+                
+                print("👋 Received left_chat event for \(chatId)")
+                
+                // Удаляем чат из списка
+                self.chats.removeAll { $0.chatId == chatId }
+                
+                // Обновляем badge
+                self.updateBadge()
+            }
+            .store(in: &cancellables)
     }
     
     private func updateParticipantsCount(chatId: String, count: Int) {
@@ -436,6 +452,27 @@ final class ChatListViewModel: ObservableObject {
                 print("❌ Failed to join chat: \(error.localizedDescription)")
             }
             return nil
+        }
+    }
+    
+    func leaveChat(_ chat: Chat) {
+        Task {
+            do {
+                try await chatService.leaveChat(chatId: chat.chatId)
+                
+                await MainActor.run {
+                    // Удаляем чат из списка
+                    self.chats.removeAll { $0.chatId == chat.chatId }
+                    print("✅ Left chat: \(chat.name)")
+                    
+                    // Обновляем badge
+                    self.updateBadge()
+                }
+            } catch {
+                await MainActor.run {
+                    print("❌ Failed to leave chat: \(error.localizedDescription)")
+                }
+            }
         }
     }
 }

@@ -127,6 +127,12 @@ struct ChatView: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         onChatRenamed?()
                     }
+                },
+                onChatLeft: {
+                    // Обновляем список чатов после выхода
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        onChatRenamed?()
+                    }
                 }
             )
         }
@@ -170,7 +176,7 @@ struct ChatView: View {
             }
             .disabled(newChatName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         } message: {
-            Text("Give this chat a memorable name. It will be encrypted and only visible to chat members.")
+            Text("Give this chat a memorable name. It will be encrypted and only visible to you. Other users can set their own names for this chat.")
         }
         .alert("Your Nickname Required", isPresented: $showNicknameDialog) {
             TextField("Nickname", text: $nickname)

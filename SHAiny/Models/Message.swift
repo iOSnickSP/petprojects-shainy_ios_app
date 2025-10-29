@@ -49,15 +49,19 @@ struct Message: Identifiable, Equatable {
     /// Reply information if this is a reply to another message
     let replyTo: MessageReply?
     
+    /// Whether this is a system message (e.g. "User left the chat")
+    let isSystem: Bool
+    
     init(
         id: UUID = UUID(),
         text: String,
-        encryptedText: String,
-        shaHash: String,
+        encryptedText: String = "",
+        shaHash: String = "",
         timestamp: Date = Date(),
-        isFromCurrentUser: Bool,
+        isFromCurrentUser: Bool = false,
         senderName: String? = nil,
-        replyTo: MessageReply? = nil
+        replyTo: MessageReply? = nil,
+        isSystem: Bool = false
     ) {
         self.id = id
         self.text = text
@@ -67,6 +71,7 @@ struct Message: Identifiable, Equatable {
         self.isFromCurrentUser = isFromCurrentUser
         self.senderName = senderName
         self.replyTo = replyTo
+        self.isSystem = isSystem
     }
 }
 

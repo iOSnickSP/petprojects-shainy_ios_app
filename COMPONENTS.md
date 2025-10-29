@@ -105,18 +105,32 @@ When `preserveIds: true`, existing chat UUIDs are preserved during reload to pre
 Manages a single chat conversation.
 
 **Key Properties**:
-- `messages`: Array of messages (paginated)
+- `messages`: Array of messages (paginated, filtered by permissions)
 - `messageText`: Current text input value
 - `participantsCount`: Number of chat members
 - `canSendMessages`: Whether user can send (false for read-only channels)
+- **`participants`: Array of participants with permission status**
+- **`participantsWithoutKey`: Participants who can't see your messages (filtered: joined after you, have nickname)**
 
 **Key Methods**:
 - `sendMessage()`: Encrypt and send message via WebSocket
 - `renameChat(newName:)`: Set encrypted custom chat name
 - `setNickname(_:)`: Set user's nickname for this chat
+- **`loadParticipants()`: Fetch participant list with permissions**
+- **`grantPermission(to:)`: Grant message visibility to specific user**
 
 **Pending Messages**:
 If user hasn't set nickname, message is held in `pendingMessageText` until nickname is provided.
+
+**Message Grouping**:
+`shouldShowSenderName(for:at:)` determines whether to show sender name based on:
+- First message in sequence from same sender
+- OR time difference > 60 seconds from previous message
+
+**Permission Prompt**:
+- Shown only in private (non-read-only) chats
+- Only for users who joined after you and have set their nickname
+- Prompt appears after they set nickname and participate in chat
 
 ## Services
 
@@ -134,8 +148,8 @@ Handles authentication API calls.
 Handles all chat-related API calls.
 
 **Key Methods**:
-- `fetchChats()` → List of user's chats
-- `fetchMessages(chatId:encryptionKey:limit:offset:)` → Paginated messages
+- `fetchChats()` → List of user's chats (with filtered lastMessage)
+- `fetchMessages(chatId:encryptionKey:limit:offset:)` → Paginated messages (filtered by permissions)
 - `checkChatExists(keyHash:)` → Check if chat exists
 - `createChat(keyPhrase:keyHash:)` → Create new chat
 - `joinChat(chatId:keyPhrase:)` → Join existing chat
@@ -143,11 +157,18 @@ Handles all chat-related API calls.
 - `markChatAsRead(chatId:)` → Clear unread count on backend
 - `setNickname(_:for:)` → Set user nickname in chat
 - `getNickname(for:)` → Get user nickname in chat
+- **`fetchParticipants(for:)` → Get participants with permission status**
+- **`grantPermission(to:in:)` → Grant message visibility permission**
 
 **Singleton**: `ChatService.shared`
 
 **Automatic Decryption**:
 `fetchChats()` and `fetchMessages()` automatically decrypt names and messages using stored keys.
+
+**Permission-Based Filtering**:
+- `fetchMessages()`: Backend filters messages user can see before returning
+- `fetchChats()`: Backend finds last *visible* message for user
+- Ensures UI always shows accurate, permission-filtered data
 
 ### WebSocketService (`Services/WebSocketService.swift`)
 Manages WebSocket connection for real-time messaging.
@@ -155,12 +176,14 @@ Manages WebSocket connection for real-time messaging.
 **Publishers**:
 - `newMessagePublisher`: Emits `(chatId, message)` tuples
 - `chatsUpdatedPublisher`: Signals to reload chat list
+- **`participantsUpdatedPublisher`: Emits `(chatId, participantsCount)` when count changes**
+- **`permissionGrantedPublisher`: Emits `(chatId, authorId, unreadCount)` when permission granted**
 - `isConnected`: Boolean connection state
 
 **Key Methods**:
 - `connect()`: Establish WebSocket connection
 - `authenticate()`: Send auth token to server
-- `sendChatMessage(chatId:encryptedText:shaHash:)`: Send message
+- `sendChatMessage(chatId:encryptedText:shaHash:replyTo:)`: Send message (with optional reply)
 - `disconnect()`: Close connection
 
 **Singleton**: `WebSocketService.shared`
@@ -168,6 +191,12 @@ Manages WebSocket connection for real-time messaging.
 **Lifecycle**:
 - Connected after successful authentication
 - Disconnected on logout or app termination
+
+**Real-Time Updates**:
+- `participants_updated`: When user joins/leaves chat or count changes
+- `permission_granted`: When user grants permission to see their messages
+  - Includes updated `unreadCount` for immediate badge sync
+  - Triggers message list reload and chat list update
 
 ### NotificationService (`Services/NotificationService.swift`)
 Manages push notifications (APNs).
@@ -319,9 +348,11 @@ Main screen displaying chat list.
 **Features**:
 - Pull-to-refresh
 - Separate sections for global and private chats
-- Unread badges
+- Unread badges (accurate, permission-filtered counts)
 - Navigation to chat detail
 - Push notification deep linking
+- **Auto-updates badge on app becoming active**
+- **Programmatic navigation** from push notifications (stays in chat, doesn't pop back)
 
 **Navigation States**:
 - Loading: Shows progress indicator
@@ -329,20 +360,41 @@ Main screen displaying chat list.
 - Empty: Shows "No chats yet" message
 - Loaded: Shows chat list
 
+**Badge Management**:
+- Listens to `NotificationPermissionGranted` to update badge after permissions granted
+- Uses `onChange(of: scenePhase)` to refresh chats when app becomes active
+- Badge always reflects accurate count across all chats (only visible messages)
+
+**Deep Linking**:
+- Uses hidden `NavigationLink` with `isActive` binding for programmatic navigation
+- Prevents automatic pop-back when navigating from push notification
+- User stays in chat when tapping notification
+
 ### ChatView (`Views/ChatView.swift`)
 Individual chat conversation screen.
 
 **Features**:
-- Real-time message updates
+- Real-time message updates (with permission filtering)
 - Automatic scroll to bottom
 - Keyboard avoidance
 - Send message input
 - Nickname dialog (first message)
 - Chat info sheet
 - Read-only mode for announcements
+- **Participant count header** with permission status
+- **Permission prompt**: Shows for users who can't see your messages (non-read-only chats only)
+- **Message grouping**: Sender names shown strategically for readability
+- **Auto-mark as read**: Messages marked read when received in open chat
 
 **Keyboard Handling**:
 Observes `keyboardWillShow/Hide` notifications to adjust content inset.
+
+**Permission UI**:
+- Header shows: "X participants (Y does not see your messages)"
+- Permission prompt appears after user sets nickname
+- Prompt format: "Показать пользователю NickName ваши сообщения?"
+- Only shown in private (non-read-only) chats
+- Disappears after permission granted
 
 ### ChatConnectionView (`Views/ChatConnectionView.swift`)
 Modal for joining or creating a chat.
@@ -353,8 +405,14 @@ Modal for joining or creating a chat.
 3. If exists: show "Join" button
 4. If not exists: show "Create" button
 5. After join/create: optional naming dialog
+6. **New**: Automatically navigates into the chat after creation/joining
 
 **States**: Mirrors `ChatConnectionState` enum
+
+**Auto-Navigation**:
+- After creating or joining chat, user is automatically taken to chat screen
+- Uses `NotificationCenter` to trigger navigation: `NavigateToChat` notification
+- Improves UX by eliminating extra tap to enter chat
 
 ### ChatInfoView (`Views/ChatInfoView.swift`)
 Chat details and settings sheet.
@@ -363,10 +421,13 @@ Chat details and settings sheet.
 - Participant count
 - Chat key phrase display (with copy)
 - Share key phrase (generate invite code)
-- Rename chat
+- Rename chat (clarifies name is only visible to you)
 - Leave chat
 
 **Security Note**: Key phrase is displayed here for sharing purposes.
+
+**Rename Alert**:
+Clarifies that custom chat name is "only visible to you. Other users can set their own names for this chat." This prevents confusion about chat name visibility.
 
 ### LoginView (`Views/LoginView.swift`)
 Authentication screen.
@@ -418,15 +479,26 @@ Individual chat row in list.
 Individual message bubble in chat.
 
 **Features**:
-- Sender name (for messages from others)
+- **Sender name (conditionally shown based on `shouldShowSenderName`)**
+  - Shows "(You)" indicator for current user's messages
+  - Only displayed for first message in group or after 60+ second gap
 - Optional encrypted data section (expandable)
 - Decrypted message text
 - Timestamp
 - Color-coded by sender (purple/blue gradient for current user)
+- **Reply preview** (shows quoted message when replying)
 
 **Alignment**:
 - Current user messages: right-aligned
 - Other user messages: left-aligned
+
+**Message Grouping**:
+Sender name shown only when:
+1. First message from this sender in sequence
+2. OR previous message was from different sender
+3. OR time gap > 60 seconds from previous message
+
+This creates visual groups of messages from the same user.
 
 ### ExpandableSHAView (`Views/Components/ExpandableSHAView.swift`)
 Expandable view for encrypted text or SHA hash.

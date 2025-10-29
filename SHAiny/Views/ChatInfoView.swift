@@ -15,8 +15,11 @@ struct ChatInfoView: View {
     @State private var newChatName = ""
     @State private var keyPhraseCopied = false
     @State private var isRenaming = false
+    @State private var showLeaveAlert = false
+    @State private var isLeaving = false
     
     let onChatRenamed: (() -> Void)?
+    var onChatLeft: (() -> Void)?
     
     var body: some View {
         NavigationView {
@@ -38,6 +41,14 @@ struct ChatInfoView: View {
                     
                     // Chat Info Section
                     chatInfoSection
+                    
+                    // Leave Chat Section (только для приватных чатов)
+                    if !chat.isGlobal {
+                        Divider()
+                            .background(Color.gray.opacity(0.3))
+                        
+                        leaveChatSection
+                    }
                     
                     Spacer()
                 }
@@ -72,7 +83,19 @@ struct ChatInfoView: View {
             }
             .disabled(newChatName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isRenaming)
         } message: {
-            Text("Enter a new name for this chat. It will be encrypted and only visible to chat members.")
+            Text("Enter a new name for this chat. It will be encrypted and only visible to you. Other users can set their own names for this chat.")
+        }
+        .alert("Leave Chat?", isPresented: $showLeaveAlert) {
+            Button("Cancel", role: .cancel) {}
+            
+            Button("Leave", role: .destructive) {
+                Task {
+                    await leaveChat()
+                }
+            }
+            .disabled(isLeaving)
+        } message: {
+            Text("Are you sure you want to leave this chat? You will no longer be able to see or send messages.")
         }
     }
     
@@ -249,11 +272,65 @@ struct ChatInfoView: View {
         }
     }
     
+    private var leaveChatSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button(action: {
+                showLeaveAlert = true
+            }) {
+                HStack {
+                    Image(systemName: "rectangle.portrait.and.arrow.right")
+                        .foregroundColor(.red)
+                        .frame(width: 28)
+                    
+                    Text("Leave Chat")
+                        .foregroundColor(.red)
+                    
+                    Spacer()
+                    
+                    if isLeaving {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .red))
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+            }
+            .disabled(isLeaving)
+            .background(Color(red: 0.15, green: 0.15, blue: 0.17))
+            .cornerRadius(12)
+        }
+    }
+    
     private func formatDate(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
         return formatter.string(from: date)
+    }
+    
+    private func leaveChat() async {
+        isLeaving = true
+        
+        do {
+            try await ChatService.shared.leaveChat(chatId: chat.chatId)
+            
+            await MainActor.run {
+                isLeaving = false
+                
+                // Закрываем шторку
+                isPresented = false
+                
+                // Уведомляем об успешном выходе
+                onChatLeft?()
+            }
+            
+            print("✅ Successfully left chat")
+        } catch {
+            await MainActor.run {
+                isLeaving = false
+                print("❌ Failed to leave chat: \(error.localizedDescription)")
+            }
+        }
     }
     
     private func renameChat() async {

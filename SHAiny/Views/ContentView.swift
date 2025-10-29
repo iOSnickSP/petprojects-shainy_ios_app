@@ -11,6 +11,9 @@ struct ContentView: View {
     @StateObject private var viewModel = ChatListViewModel()
     @State private var keyPhrase = ""
     @State private var navigationToChatId: String? = nil
+    @State private var isNavigationActive = false
+    @State private var chatToLeave: Chat?
+    @State private var showLeaveAlert = false
     @Environment(\.scenePhase) var scenePhase
     
     var body: some View {
@@ -91,9 +94,17 @@ struct ContentView: View {
                         // Ищем чат по ID
                         if viewModel.chats.first(where: { $0.chatId == chatId }) != nil {
                             navigationToChatId = chatId
+                            isNavigationActive = true
                         } else {
                             // Если чат не найден, перезагружаем список
-                            viewModel.loadChats()
+                            viewModel.loadChats(preserveIds: true)
+                            // Пытаемся установить навигацию после небольшой задержки
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                                if viewModel.chats.first(where: { $0.chatId == chatId }) != nil {
+                                    navigationToChatId = chatId
+                                    isNavigationActive = true
+                                }
+                            }
                         }
                     }
                 }
@@ -113,6 +124,24 @@ struct ContentView: View {
                 // Обновляем чаты и badge когда приложение становится активным
                 if newPhase == .active {
                     viewModel.loadChats(preserveIds: true)
+                }
+            }
+            .alert("Leave Chat?", isPresented: $showLeaveAlert) {
+                Button("Cancel", role: .cancel) {
+                    chatToLeave = nil
+                }
+                
+                Button("Leave", role: .destructive) {
+                    if let chat = chatToLeave {
+                        viewModel.leaveChat(chat)
+                    }
+                    chatToLeave = nil
+                }
+            } message: {
+                if let chat = chatToLeave {
+                    Text("Are you sure you want to leave '\(chat.name)'? You will no longer be able to see or send messages in this chat.")
+                } else {
+                    Text("Are you sure you want to leave this chat?")
                 }
             }
         }
@@ -210,6 +239,14 @@ struct ContentView: View {
                                 ChatRowView(chat: chat)
                             }
                             .listRowBackground(Color(red: 0.15, green: 0.15, blue: 0.17))
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                Button(role: .destructive) {
+                                    chatToLeave = chat
+                                    showLeaveAlert = true
+                                } label: {
+                                    Label("Leave", systemImage: "rectangle.portrait.and.arrow.right")
+                                }
+                            }
                         }
                     }
                 }
@@ -233,17 +270,11 @@ struct ContentView: View {
                             viewModel.loadChats(preserveIds: true)
                         }
                     ),
-                    isActive: .constant(true)
+                    isActive: $isNavigationActive
                 ) {
                     EmptyView()
                 }
                 .hidden()
-                .onAppear {
-                    // Сбрасываем navigationToChatId после навигации
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        navigationToChatId = nil
-                    }
-                }
             }
         }
     }

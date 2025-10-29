@@ -32,6 +32,7 @@ struct IncomingWSMessage: Codable {
         let shaHash: String
         let timestamp: Double
         let replyTo: ReplyDTO?
+        let isSystem: Bool?
         
         struct ReplyDTO: Codable {
             let messageId: String
@@ -72,6 +73,11 @@ class WebSocketService: NSObject, ObservableObject {
     private let permissionGrantedSubject = PassthroughSubject<(chatId: String, authorId: String, unreadCount: Int), Never>()
     var permissionGrantedPublisher: AnyPublisher<(chatId: String, authorId: String, unreadCount: Int), Never> {
         permissionGrantedSubject.eraseToAnyPublisher()
+    }
+    
+    private let leftChatSubject = PassthroughSubject<String, Never>()
+    var leftChatPublisher: AnyPublisher<String, Never> {
+        leftChatSubject.eraseToAnyPublisher()
     }
     
     private override init() {
@@ -236,6 +242,12 @@ class WebSocketService: NSObject, ObservableObject {
                         print("🔓 Permission granted in chat \(chatId) by author \(authorId), unreadCount: \(unreadCount)")
                     }
                     
+                case "left_chat":
+                    if let chatId = incoming.chatId {
+                        self.leftChatSubject.send(chatId)
+                        print("👋 Successfully left chat \(chatId)")
+                    }
+                    
                 case "error":
                     print("❌ WebSocket error: \(incoming.error ?? "unknown")")
                     
@@ -249,6 +261,21 @@ class WebSocketService: NSObject, ObservableObject {
     }
     
     private func convertToMessage(_ dto: IncomingWSMessage.MessageDTO) -> Message {
+        // Если это системное сообщение
+        if dto.isSystem == true {
+            return Message(
+                id: UUID(uuidString: dto.id) ?? UUID(),
+                text: dto.text,
+                encryptedText: "",
+                shaHash: "",
+                timestamp: Date(timeIntervalSince1970: dto.timestamp / 1000),
+                isFromCurrentUser: false,
+                senderName: nil,
+                replyTo: nil,
+                isSystem: true
+            )
+        }
+        
         // Определяем, от текущего пользователя или нет
         let currentUserId = KeychainService.shared.getUserIdFromToken()
         let isFromCurrentUser = (dto.userId == currentUserId)
@@ -272,7 +299,8 @@ class WebSocketService: NSObject, ObservableObject {
             timestamp: Date(timeIntervalSince1970: dto.timestamp / 1000),
             isFromCurrentUser: isFromCurrentUser,
             senderName: dto.senderName,
-            replyTo: replyTo
+            replyTo: replyTo,
+            isSystem: false
         )
     }
     

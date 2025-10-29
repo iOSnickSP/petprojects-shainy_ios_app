@@ -62,6 +62,10 @@ struct ChatConnectionView: View {
                 
                 Button("Skip", role: .cancel) {
                     chatName = ""
+                    // Обновляем список чатов и переходим в созданный чат
+                    if let chatId = createdChatId {
+                        navigateToChat(chatId: chatId)
+                    }
                     dismiss()
                 }
                 
@@ -71,13 +75,31 @@ struct ChatConnectionView: View {
                             await renameChat(chatId: chatId, newName: chatName)
                         }
                         chatName = ""
+                        // Обновляем список чатов и переходим в созданный чат
+                        if let chatId = createdChatId {
+                            navigateToChat(chatId: chatId)
+                        }
                         dismiss()
                     }
                 }
                 .disabled(chatName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             } message: {
-                Text("Give this chat a memorable name. It will be encrypted and only visible to chat members.")
+                Text("Give this chat a memorable name. It will be encrypted and only visible to you. Other users can set their own names for this chat.")
             }
+        }
+    }
+    
+    private func navigateToChat(chatId: String) {
+        // Обновляем список чатов
+        viewModel.loadChats(preserveIds: true)
+        
+        // Ждем немного, чтобы чат загрузился, затем отправляем уведомление о навигации
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            NotificationCenter.default.post(
+                name: NSNotification.Name("NavigateToChat"),
+                object: nil,
+                userInfo: ["chatId": chatId]
+            )
         }
     }
     
@@ -150,7 +172,8 @@ struct ChatConnectionView: View {
                             createdChatId = chatId
                             showNamingDialog = true
                         } else {
-                            // Если имя уже есть - просто закрываем sheet
+                            // Если имя уже есть - переходим в чат и закрываем sheet
+                            navigateToChat(chatId: chatId)
                             dismiss()
                         }
                     }

@@ -188,6 +188,9 @@ class ChatService {
                 let currentUserId = KeychainService.shared.getUserIdFromToken()
                 
                 let messages = messagesResponse.messages.compactMap { dto -> Message? in
+                    // Для global-announcements обрабатываем все сообщения как обычные (с расшифровкой)
+                    // Не используем isSystem, чтобы показывать их как обычные пузыри сообщений
+                    
                     let encryptedText = dto.text
                     var decryptedText = dto.text
                     
@@ -234,7 +237,8 @@ class ChatService {
                         timestamp: Date(timeIntervalSince1970: dto.timestamp / 1000),
                         isFromCurrentUser: (dto.userId == currentUserId),
                         senderName: dto.senderName,
-                        replyTo: replyTo
+                        replyTo: replyTo,
+                        isSystem: false
                     )
                     
                     print("   Message created with encrypted text length: \(message.encryptedText.count)")
@@ -614,6 +618,36 @@ class ChatService {
             print("✅ Permission granted successfully")
         } else {
             throw NSError(domain: "ChatService", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Failed to grant permission"])
+        }
+    }
+    
+    /// Покинуть чат (удалить себя из участников)
+    func leaveChat(chatId: String) async throws {
+        guard let token = KeychainService.shared.getAccessToken() else {
+            throw NSError(domain: "ChatService", code: -1, userInfo: [NSLocalizedDescriptionKey: "No access token"])
+        }
+        
+        let url = URL(string: "\(baseURL)/chat/\(chatId)/leave")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        
+        print("👋 Leaving chat: \(chatId)")
+        
+        let (_, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NSError(domain: "ChatService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
+        }
+        
+        if httpResponse.statusCode == 200 {
+            print("✅ Successfully left chat \(chatId)")
+            
+            // Удаляем локальные данные
+            ChatKeysStorage.shared.deleteKey(forChatId: chatId)
+            ChatNicknamesStorage.shared.deleteNickname(for: chatId)
+        } else {
+            throw NSError(domain: "ChatService", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Failed to leave chat"])
         }
     }
 }

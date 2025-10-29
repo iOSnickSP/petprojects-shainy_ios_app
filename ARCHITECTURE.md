@@ -129,14 +129,17 @@ AuthState:
 
 1. **Global Chats** (`isGlobal: true`)
    - Announcements channel (read-only for most users)
-   - Fixed encryption key: `"AnnouncementsSHAinyChat"`
+   - Fixed encryption key: `"AnnouncementsSHAinyChat"` (stored unencrypted as exception)
    - All users automatically join
+   - Messages encrypted on server, decrypted on client
+   - Welcome message shown as unread on first launch
 
 2. **Private Chats** (`isGlobal: false`)
    - User-created encrypted rooms
    - Require key phrase to join/create
    - Key phrase is hashed (SHA-256) and used as chat identifier
    - Encryption key is the original key phrase
+   - **Message visibility permissions** control who sees messages
 
 #### Chat Creation/Joining Flow
 
@@ -154,6 +157,27 @@ ChatConnectionState:
 3. Backend checks if chat with this hash exists
 4. User either joins existing chat or creates new one
 5. Key phrase stored locally for encryption/decryption
+6. **New**: After creation/joining, automatically navigate into chat
+
+#### Message Visibility Permissions
+
+**Key Concept**: Users joining a chat later don't automatically see earlier messages.
+
+**Rules**:
+- User always sees their own messages
+- User automatically sees messages from users who joined **before** them
+- For users who joined **after**, explicit permission must be granted
+- Permission granted via in-chat prompt: "Show your messages to [Nickname]?"
+- In global chats, all users see all messages (no permissions needed)
+
+**Example Flow**:
+1. User A creates chat (joins at time T1)
+2. User B joins chat (joins at time T2, after T1)
+3. User A sees all of User B's messages (B joined after A)
+4. User B cannot see User A's messages until A grants permission
+5. User A sees prompt after User B sets nickname
+6. User A grants permission → User B now sees A's messages
+7. Real-time update: messages appear immediately without refresh
 
 ### Encryption System
 
@@ -187,7 +211,7 @@ Decryption Flow:
 ```swift
 Outgoing:
 - auth(token)                    // Authenticate connection
-- sendMessage(chatId, encryptedText, shaHash)
+- sendMessage(chatId, encryptedText, shaHash, replyTo)
 - refreshChats                   // Request chat list update
 
 Incoming:
@@ -195,14 +219,26 @@ Incoming:
 - auth_error(message)            // Authentication failed
 - new_message(chatId, message)   // New message received
 - chats_updated                  // Chat list changed
+- participants_updated(chatId, participantsCount) // Participant count changed
+- permission_granted(chatId, authorId, unreadCount) // Message permission granted
 - error(message)                 // Error occurred
 ```
 
 **Message Flow**:
 1. User types message → encrypts → sends via WebSocket
-2. Backend validates, stores, broadcasts to chat participants
-3. Recipients receive via WebSocket → decrypt → display
-4. ChatListViewModel updates chat preview and unread count
+2. Backend validates, stores, checks permissions
+3. Backend broadcasts to participants who can see the message
+4. Recipients receive via WebSocket → decrypt → display
+5. ChatListViewModel updates chat preview and unread count
+6. **Auto-mark as read**: When message received in open chat, automatically marked as read
+
+**Permission Flow**:
+1. New user joins chat → sets nickname
+2. Existing users see prompt: "Show your messages to [Nickname]?"
+3. User grants permission → backend records permission
+4. `permission_granted` WebSocket event sent to new user
+5. New user's chat view refreshes → messages appear immediately
+6. Chat list updates with correct lastMessage and unreadCount
 
 ### Notifications System
 
@@ -215,29 +251,37 @@ Flow:
 3. Send device token to backend
 4. Backend stores token for user
 5. When new message arrives:
-   - Backend calculates total unread count for recipient
+   - Backend calculates total unread count for recipient (only visible messages)
    - Sends push notification with accurate badge count
 6. App receives notification:
-   - If app open + chat open: just decrypt and show
+   - If app open + chat open: auto-mark as read + show message
    - If app open + chat closed: show in-app banner + update badge
    - If app closed: show system notification with badge
    - Badge automatically synced from payload
+7. Tap notification → navigate directly into chat
 ```
 
-**Notification Payload**:
+**Notification Payload** (Secure Format):
 ```json
 {
   "aps": {
     "alert": {
-      "title": "ChatName",
-      "body": "SenderName: Message preview"
+      "title": "New message 📩",
+      "body": "From SenderNickname"
     },
     "badge": 5,
     "sound": "default"
   },
-  "chatId": "chat-id-here"
+  "chatId": "chat-id-here",
+  "messageId": "message-id-here"
 }
 ```
+
+**Security Note**: 
+- Message content NOT shown in push notifications for end-to-end encryption
+- Chat name NOT shown (server cannot decrypt it)
+- Only sender's nickname displayed
+- This prevents message content from being visible in notification history or lock screen
 
 ### Badge Management System
 
@@ -335,8 +379,27 @@ struct Message: Identifiable, Equatable {
     let timestamp: Date             // When sent
     let isFromCurrentUser: Bool     // For message bubble alignment
     let senderName: String?         // Sender's nickname
+    let replyTo: MessageReply?      // Optional reply reference
+    let isSystem: Bool              // System message flag (for special rendering)
 }
 ```
+
+### Participant Model
+
+```swift
+struct Participant: Identifiable {
+    let id: String                  // Participant identifier
+    let userId: String              // User's ID
+    let nickname: String?           // User's nickname in chat
+    let joinedAt: Double?           // Join timestamp (milliseconds)
+    let canSeeMyMessages: Bool      // Whether they can see current user's messages
+    let isCurrentUser: Bool         // Is this the current user
+}
+```
+
+**Usage**: 
+- Display participant list with permission status
+- Show prompt only for participants who can't see messages (and have nickname set)
 
 ## ViewModels Deep Dive
 
@@ -358,16 +421,22 @@ struct Message: Identifiable, Equatable {
 ### ChatViewModel
 
 **Responsibilities**:
-- Load message history (paginated)
+- Load message history (paginated, filtered by permissions)
 - Send new messages (encrypt → WebSocket)
 - Receive real-time messages via WebSocket
 - Manage nickname dialogs
 - Handle chat renaming
+- **Load participant list with permission status**
+- **Grant message permissions to other users**
+- **Auto-mark messages as read when received in open chat**
 
 **Key Features**:
 - Driver property wrapper for reactive updates
 - Pending message queue when nickname missing
 - Automatic scroll to bottom on new messages
+- **Message grouping logic**: Show sender name only for first message in group (< 60 seconds apart)
+- **Permission prompt**: Show only for users who joined after you and set their nickname
+- **Real-time permission updates**: Messages appear immediately after permission granted
 
 ### AuthViewModel
 
@@ -422,11 +491,13 @@ struct Message: Identifiable, Equatable {
 - `POST /chat/check` - Check if chat exists
 - `POST /chat/create` - Create new chat
 - `POST /chat/:id/join` - Join existing chat
-- `GET /chat/:id/messages` - Get message history
+- `GET /chat/:id/messages` - Get message history (filtered by permissions)
 - `PUT /chat/:id/name` - Set encrypted chat name
 - `POST /chat/:id/read` - Mark chat as read
 - `POST /chat/:id/nickname` - Set user nickname
 - `GET /chat/:id/nickname` - Get user nickname
+- **`GET /chat/:id/participants` - Get participants with permission status**
+- **`POST /chat/:id/grant-permission` - Grant message visibility permission**
 
 **Notifications**:
 - `POST /notifications/register` - Register device token

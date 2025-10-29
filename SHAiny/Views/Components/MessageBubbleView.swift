@@ -33,26 +33,42 @@ struct MessageBubbleView: View {
         self.onReply = onReply
     }
     
+    @ViewBuilder
     var body: some View {
-        ZStack(alignment: .trailing) {
-            // Reply icon that appears behind the message when swiping
-            if onReply != nil && offset < -20 {
-                HStack {
-                    Spacer()
-                    Image(systemName: "arrowshape.turn.up.left.fill")
-                        .font(.title2)
-                        .foregroundColor(.purple)
-                        .opacity(min(1.0, Double(-offset / 60)))
-                        .padding(.trailing, 20)
-                }
+        // Системные сообщения отображаем по центру
+        if message.isSystem {
+            HStack {
+                Spacer()
+                Text(message.text)
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.gray.opacity(0.15))
+                    .cornerRadius(12)
+                Spacer()
             }
-            
-            HStack(alignment: .bottom, spacing: 0) {
-                if message.isFromCurrentUser {
-                    Spacer(minLength: 60)
+            .padding(.vertical, 4)
+        } else {
+            ZStack(alignment: .trailing) {
+                // Reply icon that appears behind the message when swiping
+                if onReply != nil && offset < -20 {
+                    HStack {
+                        Spacer()
+                        Image(systemName: "arrowshape.turn.up.left.fill")
+                            .font(.title2)
+                            .foregroundColor(.purple)
+                            .opacity(min(1.0, Double(-offset / 60)))
+                            .padding(.trailing, 20)
+                    }
                 }
                 
-                VStack(alignment: message.isFromCurrentUser ? .trailing : .leading, spacing: 4) {
+                HStack(alignment: .bottom, spacing: 0) {
+                    if message.isFromCurrentUser {
+                        Spacer(minLength: 60)
+                    }
+                    
+                    VStack(alignment: message.isFromCurrentUser ? .trailing : .leading, spacing: 4) {
                 // Sender name (with "You" indicator for own messages, only if should show)
                 if shouldShowSenderName, let senderName = message.senderName {
                     Text(message.isFromCurrentUser ? "\(senderName) (You)" : senderName)
@@ -161,6 +177,7 @@ struct MessageBubbleView: View {
                     }
                 : nil
             )
+            }
         }
     }
     

@@ -134,6 +134,16 @@ final class ChatViewModel: ObservableObject {
                 if !self.messages.contains(where: { $0.id == message.id }) {
                     self.messages.append(message)
                     print("📩 New message added to chat \(self.chat.name)")
+                    
+                    // Автоматически помечаем чат как прочитанный, когда получаем сообщение в открытом чате
+                    Task {
+                        do {
+                            try await self.chatService.markChatAsRead(chatId: self.chat.chatId)
+                            print("✅ Chat \(self.chat.chatId) auto-marked as read (new message received)")
+                        } catch {
+                            print("❌ Failed to auto-mark chat as read: \(error.localizedDescription)")
+                        }
+                    }
                 }
             }
             .store(in: &cancellables)
