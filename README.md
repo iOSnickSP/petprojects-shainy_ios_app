@@ -152,13 +152,12 @@ SHAiny/
 
 ### Storage
 
-- **Keychain**: Access tokens (JWT)
-- **UserDefaults**: Settings, encryption keys, nicknames
+- **Keychain**: Access tokens (JWT), encryption keys (with auto-migration from UserDefaults)
+- **UserDefaults**: Settings, nicknames
 - **No Cloud Sync**: All data stays on device
 
 ### Limitations (MVP)
 
-⚠️ Encryption keys stored in UserDefaults (not Keychain)  
 ⚠️ No key rotation or Perfect Forward Secrecy  
 ⚠️ Server sees chat participation metadata
 

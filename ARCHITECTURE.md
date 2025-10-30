@@ -22,7 +22,7 @@ SHAiny is an iOS messaging application that provides end-to-end encrypted chat f
 - **Reactive Framework**: Combine
 - **Networking**: URLSession (REST), URLSessionWebSocketTask (WebSocket)
 - **Security**: CryptoKit, CommonCrypto
-- **Local Storage**: Keychain (tokens), UserDefaults (settings, keys, nicknames)
+- **Local Storage**: Keychain (tokens, encryption keys), UserDefaults (settings, nicknames)
 
 ## Project Structure
 
